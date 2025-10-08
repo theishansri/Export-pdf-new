@@ -2,13 +2,14 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "outDir": "dist/server",
-    "rootDir": ".",
+    "rootDir": "server",
     "module": "ES2022",
-    "target": "ES2022",
     "moduleResolution": "Node",
+    "target": "ES2022",
     "esModuleInterop": true,
     "strict": true,
     "sourceMap": true,
+    "skipLibCheck": true,
     "noEmit": false
   },
   "include": ["server/**/*.ts", "shared/**/*.ts"],
