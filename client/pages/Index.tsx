@@ -25,11 +25,11 @@ import { Button } from "@/components/ui/button";
 import { FileDown, ChevronDown } from "lucide-react";
 import html2pdf from "html2pdf.js";
 
-// Import the worker directly
-const PdfWorker = new Worker(
-  new URL("@/workers/pdfWorker.js", import.meta.url),
-  { type: "module" },
-);
+// // Import the worker directly
+// const PdfWorker = new Worker(
+//   new URL("@/workers/pdfWorker.js", import.meta.url),
+//   { type: "module" },
+// );
 
 interface RumState {
   TTFB?: number;
@@ -743,34 +743,30 @@ export default function Index() {
         chartImages.push(canvas.toDataURL("image/png"));
       }
 
-      // Initialize the worker
-      const worker = PdfWorker;
+      // Generate PDF directly in the main thread
+      const doc = new jsPDF();
+      chartImages.forEach((image, index) => {
+        if (index > 0) doc.addPage();
+        doc.addImage(image, "PNG", 10, 10, 190, 100); // Adjust dimensions as needed
+      });
 
-      // Send data to the worker
-      worker.postMessage({ charts: chartImages, rows });
+      // Add table data using autoTable
+      autoTable(doc, {
+        head: [["ID", "Customer", "Email", "Amount", "Status", "Date"]],
+        body: rows.map((row) => [
+          row.id,
+          row.customer,
+          row.email,
+          `$${row.amount.toLocaleString()}`,
+          row.status,
+          row.date,
+        ]),
+      });
 
-      // Listen for the worker's response
-      worker.onmessage = (event) => {
-        const { success, pdfBlob, error } = event.data;
-
-        if (success) {
-          // Create a download link for the PDF
-          const url = window.URL.createObjectURL(pdfBlob);
-          const link = document.createElement("a");
-          link.href = url;
-          link.download = "dashboard-report.pdf";
-          document.body.appendChild(link);
-          link.click();
-          link.remove();
-        } else {
-          console.error("Error generating PDF:", error);
-        }
-
-        // Terminate the worker
-        worker.terminate();
-      };
+      // Save the PDF
+      doc.save("dashboard-report.pdf");
     } catch (err) {
-      console.error("Error capturing charts:", err);
+      console.error("Error generating PDF:", err);
     }
   };
 
