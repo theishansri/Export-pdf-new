@@ -1,5 +1,5 @@
 import { RequestHandler } from "express";
-import { PDFGenerationRequest, PDFGenerationResponse } from "@shared/api";
+import { PDFGenerationRequest, PDFGenerationResponse } from "server/shared/api";
 import { browserPool } from "../utils/browser-pool";
 import { pdfCache } from "../utils/pdf-cache";
 

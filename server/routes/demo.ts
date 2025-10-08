@@ -1,5 +1,5 @@
 import { RequestHandler } from "express";
-import { DemoResponse } from "@shared/api";
+import { DemoResponse } from "server/shared/api";
 import { getDb } from "../index";
 
 export async function handleDemo(req, res) {
