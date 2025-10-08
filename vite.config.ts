@@ -1,10 +1,10 @@
-import { defineConfig, Plugin } from "vite";
+import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { visualizer } from "rollup-plugin-visualizer";
 
 // https://vitejs.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig({
   server: {
     host: "::",
     port: 8080,
@@ -18,7 +18,6 @@ export default defineConfig(({ mode }) => ({
   },
   plugins: [
     react(),
-    expressPlugin(mode),
     visualizer({
       filename: "dist/bundle-analysis.html",
       open: true,
@@ -30,19 +29,4 @@ export default defineConfig(({ mode }) => ({
       "@shared": path.resolve(__dirname, "./shared"),
     },
   },
-}));
-
-function expressPlugin(mode: string): Plugin {
-  return {
-    name: "express-plugin",
-    apply: "serve", // only during dev
-    async configureServer(server) {
-      if (mode !== "development") return; // skip in production
-
-      // Import Node backend here, inside the function, so Vite won't see it during build
-      const { createServer } = await import("./server");
-      const app = await createServer();
-      server.middlewares.use(app);
-    },
-  };
-}
+});
