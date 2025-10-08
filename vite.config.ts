@@ -1,8 +1,13 @@
 import { defineConfig, Plugin } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
-import { createServer } from "./server";
 import { visualizer } from "rollup-plugin-visualizer";
+
+// Only import the server dynamically in dev
+let createServer: any;
+if (process.env.NODE_ENV === "development") {
+  createServer = require("./server").createServer;
+}
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -10,7 +15,7 @@ export default defineConfig(({ mode }) => ({
     host: "::",
     port: 8080,
     fs: {
-      allow: ["./", "./client", "./shared"], // Added project root to allow list
+      allow: ["./", "./client", "./shared"],
       deny: [".env", ".env.*", "*.{crt,pem}", "**/.git/**", "server/**"],
     },
   },
@@ -21,8 +26,8 @@ export default defineConfig(({ mode }) => ({
     react(),
     expressPlugin(),
     visualizer({
-      filename: "dist/bundle-analysis.html", // Ensure the directory exists
-      open: true, // Automatically opens the report in the browser
+      filename: "dist/bundle-analysis.html",
+      open: true,
     }),
   ],
   resolve: {
@@ -36,11 +41,11 @@ export default defineConfig(({ mode }) => ({
 function expressPlugin(): Plugin {
   return {
     name: "express-plugin",
-    apply: "serve", // Only apply during development (serve mode)
+    apply: "serve", // Only apply during dev
     async configureServer(server) {
-      const app = await createServer();
+      if (!createServer) return; // skip in production build
 
-      // Add Express app as middleware to Vite dev server
+      const app = await createServer();
       server.middlewares.use(app);
     },
   };
