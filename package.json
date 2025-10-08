@@ -15,7 +15,7 @@
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
-    "start": "node dist/server/node-build.mjs",
+    "start": "node dist/server/server/node-build.js",
     "test": "vitest --run",
     "format.fix": "prettier --write .",
     "typecheck": "tsc",
