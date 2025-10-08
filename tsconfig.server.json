@@ -2,7 +2,7 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "outDir": "dist/server",
-    "rootDir": "server",
+    "rootDir": ".",
     "module": "ESNext",
     "target": "ES2022",
     "moduleResolution": "Node",
@@ -10,6 +10,6 @@
     "strict": true,
     "sourceMap": true
   },
-  "include": ["server/**/*.ts"],
+  "include": ["server/**/*.ts", "shared/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
