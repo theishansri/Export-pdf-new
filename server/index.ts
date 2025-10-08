@@ -8,7 +8,7 @@ import { MongoClient, Db } from "mongodb";
 import { handleDemo } from "./routes/demo";
 import { getRum, getRumSummary, postRum } from "./routes/rum";
 import exportPdf from "./routes/exportPdf";
-import { handleDownloadPdfPuppeteer } from "./routes/puppeteerPdf";
+import { generatePDF } from "./routes/puppeteerPdf";
 import exportPdfKit from "./routes/exportpdfkitnew";
 
 const uri: string = process.env.MONGODB_URI || "";
@@ -55,7 +55,7 @@ export async function createServer() {
   });
 
   app.get("/api/demo", handleDemo);
-  app.post("/api/export-pdf-puppeteer", handleDownloadPdfPuppeteer);
+  app.post("/api/export-pdf-puppeteer", generatePDF);
   app.post("/api/export-pdf", exportPdf);
   app.post("/api/export-pdf-kit", exportPdfKit);
 

@@ -1,182 +1,243 @@
-import * as puppeteer from "puppeteer";
-import { Request, Response } from "express";
-import { LRUCache } from "lru-cache";
-import sharp from "sharp";
-import { execFile } from "child_process";
-import { promisify } from "util";
-import { minify } from "html-minifier";
-import tmp from "tmp-promise";
-import fs from "fs/promises";
-import * as csso from "csso";
+import { RequestHandler } from "express";
+import { PDFGenerationRequest, PDFGenerationResponse } from "@shared/api";
+import { browserPool } from "../utils/browser-pool";
+import { pdfCache } from "../utils/pdf-cache";
 
-const execFileAsync = promisify(execFile);
+/**
+ * Generate PDF from HTML content using Puppeteer
+ * This runs server-side to avoid blocking the client and provide optimal RUM scores
+ */
+export const generatePDF: RequestHandler = async (req, res) => {
+  const startTime = Date.now();
+  let page;
 
-// ---------- Ghostscript PDF compression ----------
-const compressPdfGs = async (
-  inputBuffer: Buffer,
-  quality: "screen" | "ebook" | "printer" | "prepress" = "screen",
-) => {
-  const inputFile = await tmp.file();
-  const outputFile = await tmp.file();
-  await fs.writeFile(inputFile.path, inputBuffer);
-
-  const args = [
-    "-sDEVICE=pdfwrite",
-    "-dCompatibilityLevel=1.4",
-    "-dPDFSETTINGS=/" + quality,
-    "-dNOPAUSE",
-    "-dQUIET",
-    "-dBATCH",
-    `-sOutputFile=${outputFile.path}`,
-    inputFile.path,
-  ];
-
-  await execFileAsync("gs", args);
-  const compressedBuffer = await fs.readFile(outputFile.path);
-  await inputFile.cleanup();
-  await outputFile.cleanup();
-
-  return compressedBuffer;
-};
-
-// ---------- PDF Cache ----------
-const pdfCache = new LRUCache<string, Buffer>({ max: 50, ttl: 1000 * 60 * 10 });
-
-// ---------- Browser Pool ----------
-let browser: puppeteer.Browser | null = null;
-
-// Launch Puppeteer on server start for faster first request
-(async () => {
-  browser = await puppeteer.launch({
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-extensions",
-      "--disable-gpu",
-    ],
-  });
-})();
-
-const getBrowser = async () => {
-  if (!browser) throw new Error("Puppeteer browser not initialized");
-  return browser;
-};
-
-// ---------- Image Compression ----------
-const compressImages = async (html: string) => {
-  const imgRegex = /<img[^>]+src="([^">]+)"/g;
-  const matches: string[] = [];
-  let match;
-
-  while ((match = imgRegex.exec(html)) !== null) matches.push(match[1]);
-
-  const replacements = await Promise.all(
-    matches.map(async (url) => {
-      if (!url.startsWith("data:image")) return url;
-
-      const base64 = url.split(",")[1];
-      const buffer = Buffer.from(base64, "base64");
-
-      const compressed = await sharp(buffer)
-        .resize({ width: 400, withoutEnlargement: true }) // small width
-        .jpeg({ quality: 30, mozjpeg: true }) // aggressive compression
-        .toBuffer();
-
-      return `data:image/jpeg;base64,${compressed.toString("base64")}`;
-    }),
-  );
-
-  let optimizedHtml = html;
-  matches.forEach(
-    (orig, i) => (optimizedHtml = optimizedHtml.replace(orig, replacements[i])),
-  );
-  return optimizedHtml;
-};
-
-// ---------- Inline CSS ----------
-const inlineCssHtml = (html: string, css: string) => `
-<html>
-<head>
-<style>${css}</style>
-</head>
-<body>${html}</body>
-</html>
-`;
-
-// ---------- PDF Handler ----------
-export async function handleDownloadPdfPuppeteer(req: Request, res: Response) {
   try {
     const {
       html,
       css,
+      title = "RUM Dashboard",
       format = "A4",
       orientation = "portrait",
       compress = true,
-    } = req.body;
+      quality = "high",
+      cssOnly = false,
+    } = req.body as PDFGenerationRequest;
 
-    if (!html || !css)
-      return res.status(400).json({ error: "HTML and CSS required" });
-
-    // Use a cache key that uniquely identifies the request
-    const cacheKey = `${html}-${css}-${format}-${orientation}-${compress}`;
-
-    // Check if PDF is already cached
-    if (pdfCache.has(cacheKey)) {
-      const cachedPdf = pdfCache.get(cacheKey)!;
-      return res
-        .status(200)
-        .set("Content-Type", "application/pdf")
-        .set("Content-Disposition", 'attachment; filename="report.pdf"')
-        .send(cachedPdf);
+    if (!html) {
+      const errorResponse: PDFGenerationResponse = {
+        success: false,
+        error: "HTML content is required",
+      };
+      return res.status(400).json(errorResponse);
     }
 
-    // Minify CSS using csso
-    const minifiedCss = csso.minify(css).css;
-
-    const optimizedHtml = await compressImages(html);
-
-    // Inline CSS + minify HTML
-    const minifiedHtml = minify(
-      `<html><head><style>${minifiedCss}</style></head><body>${optimizedHtml}</body></html>`,
-      {
-        collapseWhitespace: true,
-        removeComments: true,
-        minifyCSS: true,
-        minifyJS: true,
-      },
-    );
-
-    const page = await (await getBrowser()).newPage();
-    await page.setContent(minifiedHtml, { waitUntil: "domcontentloaded" });
-    await page.emulateMediaType("screen");
-    await page.setViewport({ width: 800, height: 1000 });
-
-    let pdfBuffer = await page.pdf({
+    // Check cache first
+    const cacheKey = pdfCache.generateKey(html, css, {
       format,
-      printBackground: !compress,
-      landscape: orientation === "landscape",
-      margin: { top: "10mm", bottom: "10mm", left: "10mm", right: "10mm" },
-      preferCSSPageSize: true,
+      orientation,
+      compress,
+      quality,
     });
+    const cached = pdfCache.get(cacheKey);
 
-    await page.close();
-
-    if (compress && pdfBuffer.length > 5 * 1024 * 1024) {
-      pdfBuffer = await compressPdfGs(Buffer.from(pdfBuffer), "screen");
+    if (cached) {
+      console.log(`Serving cached PDF in ${Date.now() - startTime}ms`);
+      res.setHeader("Content-Type", cached.contentType);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${cached.filename}"`,
+      );
+      res.setHeader("Content-Length", cached.buffer.length);
+      return res.send(cached.buffer);
     }
 
-    // Store PDF in cache
-    pdfCache.set(cacheKey, Buffer.from(pdfBuffer));
+    console.log("Cache miss, generating new PDF...");
+    console.log("Getting page from browser pool...");
+    page = await browserPool.getPage();
+    console.log(`Page acquired in ${Date.now() - startTime}ms`);
 
-    res
-      .status(200)
-      .set("Content-Type", "application/pdf")
-      .set("Content-Disposition", 'attachment; filename="report.pdf"')
-      .send(pdfBuffer);
-  } catch (err) {
-    console.error("PDF generation error:", err);
-    res.status(500).json({ error: "Failed to generate PDF" });
-  }
+    try {
+      // Prepare optimized CSS
+      const optimizedCSS = css
+        .replace(/\/\*[\s\S]*?\*\//g, "") // Remove comments
+        .replace(/\s+/g, " ") // Compress whitespace
+        .replace(/;\s*}/g, "}") // Remove unnecessary semicolons
+        .replace(/{\s*/g, "{") // Remove space after {
+        .replace(/;\s*/g, ";") // Compress around semicolons
+        .trim();
+
+      if (cssOnly) {
+        console.log("CSS-only mode enabled, sending optimized CSS...");
+        res.setHeader("Content-Type", "text/css");
+        res.setHeader(
+          "Content-Length",
+          Buffer.byteLength(optimizedCSS, "utf-8"),
+        );
+        return res.send(optimizedCSS);
+      }
+
+      // Add a robust CSS style tag to force color for all elements
+      const colorOverrideCss = `
+        * {
+          -webkit-print-color-adjust: exact !important;
+          color-adjust: exact !important;
+          background-color: inherit !important;
+        }
+          .grid {
+          display: block !important;
+          grid-template-columns: unset !important;
+          gap: unset !important;
+        }
+        @media print {
+          * {
+            -webkit-print-color-adjust: exact !important;
+            color-adjust: exact !important;
+            box-shadow: none !important;
+          }
+          @page { margin: 0.3in; size: ${format}; }
+        }
+        .print\\:hidden { display: none !important; }
+        img, svg { max-width: 100%; height: auto; }
+        table { font-size: 11px; }
+        .recharts-wrapper { transform: scale(1); }
+      `;
+
+      // Prepare the complete HTML document
+      const fullHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>${title}</title>
+<meta name="author" content="Your Author Name">
+<meta name="description" content="Description of the document for accessibility">
+<meta name="keywords" content="PDF, Accessibility, UA-PDF, Puppeteer">
+<meta name="generator" content="Puppeteer PDF Generator">
+<style>
+${optimizedCSS}
+${colorOverrideCss}
+body {
+  margin: 0;
+  padding: 15px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
 }
+  .grid {
+  display: block !important;
+}
+  .text-muted-foreground{
+  color: red !important;
+  }
+</style>
+</head>
+<body>${html}</body>
+</html>`;
+
+      // Set the HTML content with a longer timeout for complex pages
+      await page.setContent(fullHtml, {
+        waitUntil: "networkidle0", // Better for complex pages
+        timeout: 30000,
+      });
+      console.log(`Content set in ${Date.now() - startTime}ms`);
+
+      // Emulate the 'screen' media type to ensure color rendering, then wait
+      await page.emulateMediaType("screen");
+      await new Promise((resolve) => setTimeout(resolve, 500)); // A more generous wait for rendering
+
+      console.log("Starting PDF generation...");
+      const settings = {
+        high: { scale: 1.0, margin: "15px" },
+        medium: { scale: 0.85, margin: "10px" },
+        low: { scale: 0.7, margin: "8px" },
+      };
+      const qualitySetting = settings[quality] || settings.medium;
+
+      // Generate PDF with required options
+      const pdfBuffer = await page.pdf({
+        format: format as any,
+        landscape: orientation === "landscape",
+        printBackground: true,
+        preferCSSPageSize: true,
+        displayHeaderFooter: false,
+        margin: {
+          top: qualitySetting.margin,
+          right: qualitySetting.margin,
+          bottom: qualitySetting.margin,
+          left: qualitySetting.margin,
+        },
+        tagged: false,
+        omitBackground: false,
+        scale: compress ? qualitySetting.scale : 1.0,
+      });
+
+      await browserPool.releasePage(page);
+      console.log(`PDF generated successfully in ${Date.now() - startTime}ms`);
+
+      const contentType = "application/pdf";
+      const filename = `${title.replace(/\s+/g, "_")}_${Date.now()}.pdf`;
+
+      res.setHeader("Content-Type", contentType);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`,
+      );
+      res.setHeader("Content-Length", pdfBuffer.length);
+
+      pdfCache.set(cacheKey, {
+        buffer: pdfBuffer,
+        contentType,
+        filename,
+        timestamp: Date.now(),
+      });
+
+      res.send(pdfBuffer);
+    } catch (pageError) {
+      if (page) {
+        await browserPool.releasePage(page);
+      }
+      throw pageError;
+    }
+  } catch (error) {
+    console.error("PDF generation error:", error);
+    console.log(`PDF generation failed in ${Date.now() - startTime}ms`);
+
+    if (page) {
+      try {
+        await browserPool.releasePage(page);
+      } catch (cleanupError) {
+        console.error("Error during page cleanup:", cleanupError);
+      }
+    }
+
+    const errorResponse: PDFGenerationResponse = {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unknown error occurred during PDF generation",
+    };
+
+    res.status(500).json(errorResponse);
+  }
+};
+
+/**
+ * Health check endpoint for PDF service
+ */
+export const pdfHealthCheck: RequestHandler = async (req, res) => {
+  try {
+    await browserPool.initialize();
+    res.json({
+      success: true,
+      message: "PDF service is healthy and optimized",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(503).json({
+      success: false,
+      error: "PDF service unavailable",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+};

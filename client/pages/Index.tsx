@@ -22,7 +22,7 @@ import { initRUM, getRumBuffer } from "@/lib/rum";
 import html2canvas from "html2canvas";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { FileDown } from "lucide-react";
+import { FileDown, ChevronDown } from "lucide-react";
 import html2pdf from "html2pdf.js";
 
 // Import the worker directly
@@ -696,7 +696,7 @@ export default function Index() {
   const series = useMemo(() => generateSeries(210), []);
   const reportRef = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState([]);
-  // const rows = useMemo(() => generateTableRows(1000), []);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const { state: rum, events: rumEvents } = useRUM();
 
   useEffect(() => {
@@ -706,6 +706,10 @@ export default function Index() {
     }
     fetchRows();
   }, []);
+
+  const toggleDropdown = () => {
+    setIsDropdownOpen((prev) => !prev);
+  };
 
   const handleDownloadhtml2pdf = () => {
     if (!reportRef.current) return;
@@ -947,28 +951,59 @@ export default function Index() {
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="performance">Performance</TabsTrigger>
           </TabsList>
-          <Button onClick={handleDownloadjsPdf} className="shrink-0">
-            <FileDown className="mr-2" /> Export PDF jspdf
-          </Button>
-          <Button onClick={handleDownloadhtml2pdf} className="shrink-0">
-            <FileDown className="mr-2" /> Export PDF html2pdf
-          </Button>
-          <Button
-            onClick={() => handleDownloadPdf("pdf-lib")}
-            className="shrink-0"
-          >
-            <FileDown className="mr-2" /> Export PDF pdf-lib
-          </Button>
-          <Button onClick={handleDownloadPdfPuppeteer} className="shrink-0">
-            <FileDown className="mr-2" /> Export PDF Pupeteer
-          </Button>
-          <Button
-            onClick={() => handleDownloadPdf("pdf-kit")}
-            className="shrink-0"
-          >
-            <FileDown className="mr-2" /> Export PDF KIT
-          </Button>
+
+          {/* Dropdown for Export PDF */}
+          <div className="relative">
+            {/* Dropdown Trigger */}
+            <button
+              onClick={toggleDropdown}
+              className="flex items-center px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+            >
+              <FileDown className="mr-2" />
+              Export PDF
+              <ChevronDown className="ml-2" />
+            </button>
+
+            {/* Dropdown Menu */}
+            {isDropdownOpen && (
+              <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                <div className="py-1">
+                  <button
+                    onClick={handleDownloadjsPdf}
+                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                  >
+                    Export PDF jsPDF
+                  </button>
+                  <button
+                    onClick={handleDownloadhtml2pdf}
+                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                  >
+                    Export PDF html2pdf
+                  </button>
+                  <button
+                    onClick={() => handleDownloadPdf("pdf-lib")}
+                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                  >
+                    Export PDF pdf-lib
+                  </button>
+                  <button
+                    onClick={handleDownloadPdfPuppeteer}
+                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                  >
+                    Export PDF Puppeteer
+                  </button>
+                  <button
+                    onClick={() => handleDownloadPdf("pdf-kit")}
+                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                  >
+                    Export PDF KIT
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
+
         <TabsContent value="overview" className="mt-0">
           <DashboardContent
             description="Overview: Key business KPIs with revenue, orders, users, and trends."
